@@ -1,0 +1,615 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>MTU-08 DataReader</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #d4d4d9;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            height: 100vh;
+        }
+
+        .container {
+            background-color: #ffffff;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #007bff;
+			margin-top: 0;
+            margin-bottom: 1rem;
+            font-size: 2rem;
+        }
+
+        .buttons {
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .buttons button {
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+            flex: 1 1 calc(50% - 1rem);
+        }
+
+        .buttons button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .buttons button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+
+        .panels {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .panel {
+            background-color: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 8px;
+            flex: 1;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .panel p {
+            margin: 0;
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+
+        .panel strong {
+            color: #007bff;
+        }
+
+        .status {
+            background-color: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .status p {
+            margin: 0;
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+		
+		.status strong {
+            color: #007bff;
+        }
+		
+		
+		.error {
+            background-color: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .error p {
+            margin: 0;
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+		
+		.error strong {
+            color: #e01010;
+        }
+		
+		
+    </style>
+</head>
+<body>
+	<div class="container">
+		<h1>MTU-08 DataReader</h1>
+		
+		<div class="buttons">
+			<button onclick="connectToDevice()">Поиск МТУ</button>
+			<button onclick="disconnectDevice()" disabled id="disconnectButton">Отключить</button>
+			<button onclick="measure()" disabled id="measureButton">Текущие значения</button>
+			<button onclick="getFRM()" disabled id="getFRMButton">Информация</button>
+			<button onclick="getDATBtn()" disabled id="getDATButton">Считать память</button>
+			<!--<button onclick="saveDataToFile()" disabled id="saveDataButton">Сохранить данные в файл</button>
+			<form id="send-form">
+				<input id="input" type="text">
+				<button type="submit">Send</button>
+			</form>
+			-->
+		</div>
+
+
+			<!--<label id="press"></label>
+			<label id="temp"></label>
+			<label id="sensor_id"></label>
+			<label id="sensor_volt"></label>-->
+		
+		<div class="panels">
+			<!-- Панель с текущими показаниями -->
+            <div class="panel">
+				<label id="cur_data"></label>
+			</div>
+
+            <!-- Панель с краткой информацией -->
+            <div class="panel">
+				<label id="device_info"></label>
+			</div>
+		</div>			
+		
+        <!-- Текущий статус прибора -->
+        <div class="status">
+			<label id="status_label"></label>
+		</div>
+		
+		<!-- Статус ошибки -->
+        <div class="error">
+			<label id="error_label"></label>
+		</div>
+	</div>
+
+
+	<script>
+		let device = null; // Переменная для хранения подключенного устройства
+		let readCharacteristic = null; // Характеристика для чтения
+		let writeCharacteristic = null; // Характеристика для записи
+		let FRM_Array = []; // массива для хранения данных из области FRAM
+		let dataArray = [];// = new Uint8Array(2048); // Массив для хранения однобайтных данных
+		let index = 0; // Индекс для добавления данных
+		let index2 = 0;
+
+		let typeOfRequest = null;
+		
+		let intervalId_chkFRMSz; // идентификатор интервала (таймаута) для проверки размера прочитанного FRM
+		let intervalId_chkDATSz; // идентификатор интервала (таймаута) для проверки размера прочитанного DAT
+		
+		let isGetDAT = 0;
+
+		// UUID сервиса и характеристик (замените на свои)
+		const serviceUuid = '569a1101-b87f-490c-92cb-11ba5ea5167c';
+		const readCharacteristicUuid = '569a2000-b87f-490c-92cb-11ba5ea5167c'; // Характеристика для чтения // rx
+		const writeCharacteristicUuid = '569a2001-b87f-490c-92cb-11ba5ea5167c'; // Характеристика для записи // tx
+		
+		const requestType_measure = 1;
+		const requestType_FRM = 2;
+		const requestType_DAT = 3;
+
+		// Кэш объекта характеристики
+		/*let sendForm = document.getElementById('send-form');
+		let inputField = document.getElementById('input');
+
+		// Обработка события отправки формы
+		sendForm.addEventListener('submit', function(event) {
+			event.preventDefault(); // Предотвратить отправку формы
+			console.log('inputField.value:', inputField.value);
+			send(inputField.value); // Отправить содержимое текстового поля
+			inputField.value = '';  // Обнулить текстовое поле
+			inputField.focus();     // Вернуть фокус на текстовое поле
+		});*/
+
+		async function connectToDevice() {
+			cur_data.innerHTML = '';
+			device_info.innerHTML = '';
+			status_label.innerHTML = '';
+			error_label.innerHTML = '';
+			try {
+				// Запрашиваем подключение к BLE-устройству
+				console.log('Подключение...');
+				status_label.innerHTML = '<p><strong>Установка соединения</strong></p>';
+				device = await navigator.bluetooth.requestDevice({
+					filters: [
+						{services: [0xFFE0]},
+						{services: [serviceUuid],
+						//namePrefix: "MTU" // раскомментировать для фильтрации по названию "MTU"
+						}
+					] // Фильтр по UUID сервиса
+				});
+
+				console.log('Устройство выбрано:', device.name);
+
+				// Подключаемся к устройству
+				const server = await device.gatt.connect();
+				console.log('Подключено к устройству:', device.name);
+
+				// Получаем сервис
+				const service = await server.getPrimaryService(serviceUuid);
+				console.log('Сервис найден:', service.uuid);
+
+				// Получаем характеристику для чтения
+				readCharacteristic = await service.getCharacteristic(readCharacteristicUuid);
+				console.log('Характеристика для чтения найдена:', readCharacteristic.uuid);
+
+				// Получаем характеристику для записи
+				writeCharacteristic = await service.getCharacteristic(writeCharacteristicUuid);
+				console.log('Характеристика для записи найдена:', writeCharacteristic.uuid);
+
+				let Notification = await readCharacteristic.startNotifications();
+				console.log('Подписка startNotifications');
+
+				Notification.addEventListener('characteristicvaluechanged', receive);
+				console.log('Подключение обработчика receive');
+				
+				// Активируем кнопки для чтения и записи данных
+				document.getElementById('disconnectButton').disabled = false;
+				//document.getElementById('saveDataButton').disabled = false;
+				document.getElementById('measureButton').disabled = false;
+				document.getElementById('getFRMButton').disabled = false;
+				document.getElementById('getDATButton').disabled = false;
+				index = 0;
+				
+				status_label.innerHTML = '<p><strong>Соединение установлено</strong></p>';
+				measure();
+			} catch (error) {
+				status_label.innerHTML = '';
+				error_label.innerHTML = 'Ошибка подключения';
+				console.error('Ошибка подключения:', error);
+			}
+		}
+		
+		async function disconnectDevice() {
+			cur_data.innerHTML = '';
+			device_info.innerHTML = '';
+			status_label.innerHTML = '';
+			error_label.innerHTML = '';
+			clearInterval(intervalId_chkFRMSz);
+			clearInterval(intervalId_chkDATSz);
+			if (device && device.gatt.connected) {
+				await device.gatt.disconnect();
+				console.log('Устройство отключено');
+				document.getElementById('disconnectButton').disabled = true;
+				//document.getElementById('saveDataButton').disabled = true;
+				document.getElementById('measureButton').disabled = true;
+				document.getElementById('getFRMButton').disabled = true;
+				document.getElementById('getDATButton').disabled = true;
+				device = null;
+				readCharacteristic = null;
+				writeCharacteristic = null;
+				typeOfRequest = null;
+				index = 0;
+			}
+		}
+
+		let value;
+		let data = [];
+		let i;
+		const debug_mode = 0;
+		
+		/*const BUFFER_SIZE = (32+1)*1024*1024;
+		let buffer = new Uint8Array(BUFFER_SIZE);
+		let bufferIndex = 0;*/
+		
+		let startTime = performance.now();
+		let oldTime = performance.now();
+		
+		let memory_size = 0;
+		let data_size = 0;
+		let data_size_byte = 0;
+		
+		//Получение информации
+		async function receive(event) {
+			
+			if(debug_mode == 1)
+			{
+				startTime = performance.now();
+				console.log((startTime - oldTime));
+				oldTime = startTime;
+			}
+			
+			value = event.target.value;
+			//const newData = new Uint8Array(value.buffer);
+			//value = value.buffer ? value : new DataView(value);
+			
+			//buffer.set(newData, bufferIndex);
+			//bufferIndex += newData.length;
+			//console.log(bufferIndex);
+			
+			for (i = 0; i < value.byteLength; i++) {
+
+				if(typeOfRequest == requestType_measure){
+					data[i] = value.getUint8(i);
+				}
+				
+				if(typeOfRequest == requestType_FRM){
+					FRM_Array.push(value.getUint8(i));
+				}
+				
+				if(typeOfRequest == requestType_DAT){
+					dataArray.push(value.getUint8(i));
+				}
+			}
+
+			if(typeOfRequest == requestType_measure){
+				if((data[0] == 0x04) && (data[1] == 0x0F)){
+					let fBuf = new ArrayBuffer(4);
+					let fBufView = new Uint8Array(fBuf);
+					fBufView[0] = data[2];
+					fBufView[1] = data[3];
+					fBufView[2] = data[4];
+					fBufView[3] = data[5];
+					let fView = new DataView(fBuf);
+					let str_press = fView.getFloat32(0).toFixed(1);
+					//press.innerHTML = 'Давление:' + fView.getFloat32(0).toFixed(1);
+					
+					fBufView[0] = data[6];
+					fBufView[1] = data[7];
+					fBufView[2] = data[8];
+					fBufView[3] = data[9];
+					fView = new DataView(fBuf);
+					let str_temp = fView.getFloat32(0).toFixed(1);
+					//temp.innerHTML = 'Температура:' + fView.getFloat32(0).toFixed(1);
+					
+					let str_id = data[10].toString(10);
+					//sensor_id.innerHTML = 'id:' + data[10].toString(10);
+					
+					let uintBuf = new ArrayBuffer(2);
+					let uintBufView = new Uint8Array(uintBuf);
+					uintBufView[0] = data[11];
+					uintBufView[1] = data[12];
+					fView = new DataView(uintBuf);
+					let str_volt = (fView.getUint16(0)/1000).toFixed(2);
+					//sensor_volt.innerHTML = 'Напряжение:' + (fView.getUint16(0)/1000).toFixed(2);
+					
+					cur_data.innerHTML = '<p><strong>Текущие измерения</strong><br>' +
+						'Давление, кг/см<sup>2</sup>: ' + str_press + '<br>' +
+						'Температура, °C: ' + str_temp + '<br>' +
+						'id: ' + str_id + '<br>' +
+						'Напряжение, В: ' + str_volt + '<br>' +
+						'</p>';
+
+					console.log('meas_press:', data[2].toString(16).toUpperCase().padStart(2, '0') +
+											data[3].toString(16).toUpperCase().padStart(2, '0') +
+											data[4].toString(16).toUpperCase().padStart(2, '0') +
+											data[5].toString(16).toUpperCase().padStart(2, '0')
+					);
+				}else{
+					console.log('meas_format_error:', data[0].toString(16).toUpperCase().padStart(2, '0') + data[1].toString(16).toUpperCase().padStart(2, '0'));
+				}
+			}else if(typeOfRequest == requestType_FRM){
+
+					if(FRM_Array.length >= 1536){
+						console.log('FRM read ok:', FRM_Array.length);
+						clearInterval(intervalId_chkFRMSz);
+						//show info
+						let uintBuf = new ArrayBuffer(2);
+						let uintBufView = new Uint8Array(uintBuf);
+						uintBufView[0] = FRM_Array[1];
+						uintBufView[1] = FRM_Array[2];
+						fView = new DataView(uintBuf);
+						let number = fView.getUint16(0);
+						
+						uintBufView[0] = FRM_Array[0x0C];
+						uintBufView[1] = FRM_Array[0x0C+1];
+						fView = new DataView(uintBuf);
+						memory_size = fView.getUint16(0);
+						
+						let ulongBuf = new ArrayBuffer(4);
+						let ulongBufView = new Uint8Array(ulongBuf);
+						ulongBufView[0] = FRM_Array[0x27];
+						ulongBufView[1] = FRM_Array[0x27+1];
+						ulongBufView[2] = FRM_Array[0x27+2];
+						ulongBufView[3] = FRM_Array[0x27+3];
+						fView = new DataView(ulongBuf);
+						data_size = fView.getUint32(0);
+						data_size_byte = (data_size + 1) * 2048 + 1536;
+						
+						//0x0c; // размер памяти, 2 байта
+						//0x27; // занято страниц (2048 байт), 4 байта
+						
+						device_info.innerHTML = '<p><strong>Информация о приборе</strong><br>' + 
+							'Название : ' + device.name + '<br>' + 
+							'Номер: ' + number + '<br>' + 
+							'Занято памяти, %: ' + ((100 * data_size * 2) / (memory_size * 1024)).toFixed(1) + '<br>' + 
+							//'размер памяти, Мб: ' + memory_size + '<br>' + 
+							//'занято страниц: ' + data_size + '<br>' + 
+							'</p>';
+
+						if(isGetDAT == 1){
+							isGetDAT = 0;
+							getDAT();
+						}
+					}
+			}else if(typeOfRequest == requestType_DAT){
+				index2++;
+			}
+			if(debug_mode == 1){
+				const endTime = performance.now();
+				console.log((endTime - startTime));
+			}
+		}//receive
+
+		async function measure(){
+			index = 0;
+			index2 = 0;
+			typeOfRequest = requestType_measure;
+			let buffer = new ArrayBuffer(2);
+			let view = new Uint16Array(buffer);
+			view[0] = 0x0F03;
+			writeCharacteristic.writeValue(view);
+			console.log('getMeas_pressed');
+		}
+		
+		function checkFRMSize(){
+			console.log('FRM timeout:', FRM_Array.length);
+			clearInterval(intervalId_chkFRMSz);
+		}
+		
+		async function getFRM(){
+			index = 0;
+			index2 = 0;
+			FRM_Array.splice(0); // очищаем массив при нажатии на кнопку чтения FRAM
+			intervalId_chkFRMSz = setTimeout(checkFRMSize, 2000);
+			typeOfRequest = requestType_FRM;
+			writeCharacteristic.writeValue(new TextEncoder().encode('FRM'));
+			console.log('getFRM_pressed');
+		}
+		
+		
+		let readSpeed = 0; // скорость чтения данных в байт/с
+		let time_to_read_s = 0;
+		let getDatStartTime = 0;
+		let getDatTime = 0;
+		let delayRepeats = 0;
+		
+		function checkDATSpeed(){
+			readSpeed = dataArray.length - index;
+			if(readSpeed > 0){
+				time_to_read_s = (data_size_byte - dataArray.length) / readSpeed;
+			}
+			getDatTime = (performance.now() - getDatStartTime)/1000;
+			if(debug_mode == 1)
+			{
+				console.log(readSpeed); // скорость // за 1 сек
+				console.log(index2);
+			}
+			
+			status_label.innerHTML = '<p><strong>Чтение данных</strong><br>' +
+				'скорость, байт/с: ' + readSpeed + '<br>' +
+				'осталось времени, с: ' + time_to_read_s.toFixed(0) + '<br>' +
+				'прошло времени, с: ' + getDatTime.toFixed(0) + '<br>' +
+				'</p>';
+			
+			if((index > 0) && (index == dataArray.length)){
+				delayRepeats++;
+				if(delayRepeats > 3){
+					readSpeed = dataArray.length / getDatTime;
+					saveDataToFile();
+				}
+			}else{
+				delayRepeats = 0;
+			}
+			index = dataArray.length;
+		}
+
+
+		function setEnGatDat(en){
+			if(en == 0){
+				//document.getElementById('saveDataButton').disabled = true;
+				document.getElementById('measureButton').disabled = true;
+				document.getElementById('getFRMButton').disabled = true;
+				document.getElementById('getDATButton').disabled = true;
+			}
+			if(en == 1){
+				//document.getElementById('saveDataButton').disabled = false;
+				document.getElementById('measureButton').disabled = false;
+				document.getElementById('getFRMButton').disabled = false;
+				document.getElementById('getDATButton').disabled = false;
+			}
+		}
+
+		async function getDATBtn(){
+			getFRM();
+			isGetDAT = 1;
+		}
+		
+		async function getDAT(){
+
+			setEnGatDat(0);
+			status_label.innerHTML = '';
+			error_label.innerHTML = '';
+			getDatStartTime = performance.now();
+
+			index = 0;
+			index2 = 0;
+			//buffer.splice(0);
+			dataArray.splice(0);
+			intervalId_chkDATSz = setInterval(checkDATSpeed, 1000);
+			typeOfRequest = requestType_DAT;
+			writeCharacteristic.writeValue(new TextEncoder().encode('DAT'));
+			console.log('getDAT_pressed');
+		}
+
+		// Записать значение в характеристику
+		function writeToCharacteristic(characteristic, data) {
+		  console.log('writeToCharacteristic:', data);
+		  characteristic.writeValue(new TextEncoder().encode(data));
+		}
+
+		// Отправить данные подключенному устройству
+		function send(data){
+			typeOfRequest = 2;
+			data = String(data);
+			if (!data || !writeCharacteristic) {
+				console.log('send error');
+				return;
+			}
+			writeToCharacteristic(writeCharacteristic, data);
+			console.log('out', data);
+		}
+
+		function saveDataToFile() {
+
+			setEnGatDat(1);
+			clearInterval(intervalId_chkDATSz);
+
+			if (!dataArray) {
+				console.error('Нет данных для сохранения');
+				return;
+			}
+			
+			const tmpArray = new Uint8Array(dataArray);
+			// Создаем Blob из полученных данных
+			const blob = new Blob([tmpArray], { type: 'application/octet-stream' });
+
+			// Создаем ссылку для скачивания
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = 'ble_data.mtu'; // Имя файла
+			document.body.appendChild(a);
+			a.click();
+
+			// Убираем ссылку после скачивания
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+			
+			let packet_loss = 0;
+			let msg_loss = '';
+			if(data_size_byte > dataArray.length){
+				packet_loss = data_size_byte - dataArray.length;
+				msg_loss = '<p><strong>Ошибка</strong><br>потеряно байт: ' + packet_loss + '<br></p>';
+			}else if(data_size_byte == dataArray.length){
+				packet_loss = 0;
+				msg_loss = '';
+			}else{
+				packet_loss = -1;
+				msg_loss = '<p><strong>Ошибка</strong><br>потеряно байт: error<br></p>';
+			}
+			
+			status_label.innerHTML = '<p><strong>Чтение данных</strong><br>' +
+				'Данные сохранены в файл ble_data.mtu<br>' +
+				'средняя скорость байт/с: ' + readSpeed.toFixed(0) + '<br>' +
+				'прошло времени, с: ' + getDatTime.toFixed(0) + '<br>' +
+				'</p>';
+				
+			error_label.innerHTML = msg_loss;
+			console.log('Данные сохранены в файл ble_data.mtu');
+		}
+	</script>
+</body>
+</html>
