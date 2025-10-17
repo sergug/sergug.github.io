@@ -562,6 +562,32 @@
 			console.log('out', data);
 		}
 
+		let curTime;
+
+		function formatDateNumberType(name, date) {
+
+		  var dd = date.getDate();
+		  if (dd < 10) dd = '0' + dd;
+
+		  var mm = date.getMonth() + 1;
+		  if (mm < 10) mm = '0' + mm;
+
+		  var yy = date.getFullYear();
+		  
+		  var hh = date.getHours();
+		  if (hh < 10) hh = '0' + hh;
+		  
+		  var min = date.getMinutes();
+		  if (min < 10) min = '0' + min;
+		  
+		  var sec = date.getSeconds();
+		  if (sec < 10) sec = '0' + sec;
+		  
+		  let newName = name.replace(/ /g, '_№');
+
+		  return newName + '_' + yy + '-' + mm + '-' + dd + '_' + hh + '-' + min + '-' + sec + '.db.mtu';
+		}
+
 		function saveDataToFile() {
 
 			setEnGatDat(1);
@@ -580,7 +606,12 @@
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = 'ble_data.mtu'; // Имя файла
+			
+			curTime = new Date();
+			let fileName = formatDateNumberType(device.name, curTime);
+			a.download = fileName;
+			
+			//a.download = 'ble_data.mtu'; // Имя файла
 			document.body.appendChild(a);
 			a.click();
 
@@ -602,13 +633,13 @@
 			}
 			
 			status_label.innerHTML = '<p><strong>Чтение данных</strong><br>' +
-				'Данные сохранены в файл ble_data.mtu<br>' +
+				'Данные сохранены в файл: <br>' + fileName + '<br>' +
 				'средняя скорость байт/с: ' + readSpeed.toFixed(0) + '<br>' +
 				'прошло времени, с: ' + getDatTime.toFixed(0) + '<br>' +
 				'</p>';
 				
 			error_label.innerHTML = msg_loss;
-			console.log('Данные сохранены в файл ble_data.mtu');
+			console.log('Данные сохранены в файл ' + fileName);
 		}
 	</script>
 </body>
